@@ -145,9 +145,13 @@ namespace Capcom
 
         /// <summary>
         /// WinForms manda su ícono (el de SM_CXICON: 48 al 150 %) DENTRO de base.CreateHandle, después de
-        /// OnHandleCreated; por eso los tamaños exactos se ponen acá, a la vuelta. La barra de tareas dibuja el
-        /// ICON_BIG a 24 px lógicos: si se lo damos de ese tamaño lo dibuja tal cual, si no lo achica y se emborrona
-        /// (medido el 21-sep-2026 en la barra real: 0,03 de diferencia contra el frame hecho a mano, 13,75 achicado).
+        /// OnHandleCreated; por eso los tamaños exactos se ponen acá, a la vuelta. Quien le pida el ícono a la ventana
+        /// (Alt+Tab, las miniaturas, los conmutadores de ventanas) recibe el frame del tamaño que va a dibujar.
+        ///
+        /// 🚨 El botón de la barra de tareas de Windows 11 NO sale de acá: para una app sin AppUserModelID propio usa
+        /// el ícono del exe (el de 48 reducido a 36), aunque el ICON_BIG de la ventana sea de 36 exacto. Medido el
+        /// 21-sep-2026 capturando la barra: el mejor calce es el frame de 48 con bicúbico. Con un AppID explícito sí
+        /// usa el de la ventana (0,03 de diferencia contra el frame de 36).
         /// </summary>
         protected override void CreateHandle()
         {
@@ -161,7 +165,7 @@ namespace Capcom
             uint dpi = 96;
             try { dpi = Win32.GetDpiForWindow(Handle); } catch { }
             if (dpi == 0) dpi = 96;
-            int grande = (int)Math.Round(24 * dpi / 96.0);                       // la barra de tareas: 36 al 150 %
+            int grande = (int)Math.Round(24 * dpi / 96.0);                       // 24 px lógicos: 36 al 150 %
             int chico;
             try { chico = Win32.GetSystemMetricsForDpi(Win32.SM_CXSMICON, dpi); }  // título y Alt+Tab: 24 al 150 %
             catch { chico = (int)Math.Round(16 * dpi / 96.0); }

@@ -14,9 +14,9 @@ namespace Capcom
     /// La insignia de CAPCOM (la galaxia, `assets\galaxia.png`) leída de los recursos del PROPIO exe: el .ico trae un
     /// frame PNG armado para cada tamaño (16…256, ver `assets\make-icon.py`) y acá se saca tal cual, sin reescalar.
     ///
-    /// 🚨 Windows no elige bien por su cuenta: si a la ventana le llega UN tamaño, la barra de tareas lo achica (48→36
-    /// al 150 %) y queda borroso. Medido el 21-sep-2026 contra la barra real: con el frame exacto, la barra lo dibuja
-    /// píxel por píxel. Por eso la bandeja y la ventana piden siempre el tamaño que de verdad se va a dibujar.
+    /// 🚨 Windows no elige bien por su cuenta: un ícono de otro tamaño lo reescala y queda borroso. La bandeja copia
+    /// píxel por píxel lo que se le da (medido el 21-sep-2026 contra la bandeja real: 0,1 de diferencia con el frame
+    /// de 24), así que la bandeja y la ventana piden siempre el tamaño que de verdad se va a dibujar.
     /// </summary>
     internal static class Insignia
     {

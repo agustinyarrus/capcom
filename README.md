@@ -245,9 +245,12 @@ vuelve a multiplicar al dibujar: todo píxel semitransparente sale más oscuro. 
 modelo `color × alfa²` calza casi perfecto. El ícono se arma pasándole el PNG a `CreateIconFromResourceEx`, y una
 prueba de a bordo lee los píxeles guardados dentro del `HICON` para que no vuelva a pasar.
 
-**La barra de tareas achica el ícono que le des.** A una ventana de WinForms le llega un solo tamaño (el de 48 px al
-150 %) y la barra lo reduce a 36: las cosas finas se vuelven manchas. Mandándole con `WM_SETICON` el tamaño exacto
-que va a dibujar, lo copia píxel por píxel.
+**La bandeja dibuja lo que le das; la barra de tareas, no.** El ícono de la bandeja se copia píxel por píxel, así que
+vale la pena darle el frame del tamaño exacto (24 px al 150 %) en vez de uno de 32 para que Windows lo achique. El
+botón de la barra de tareas es otra historia: en Windows 11, para una app sin `AppUserModelID` propio, sale del ícono
+del **exe** —el de 48 px reducido a 36— y no del `ICON_BIG` de la ventana, aunque por `WM_SETICON` se le haya puesto
+uno de 36 exacto. Se midió capturando la barra y comparando contra cada frame reescalado. Con un AppID explícito sí
+usa el de la ventana, y ahí el tamaño exacto se respeta.
 
 **`EM_SETCUEBANNER` no funciona en un `TextBox` multilínea** (falla en silencio), y dibujar la pista sobre el
 `WM_PAINT` del control tampoco se ve: el EDIT nativo vuelve a pintar su fondo después. La pista se pone como
