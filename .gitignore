@@ -1,0 +1,20 @@
+# Salida de compilación: el exe va al Release, no al repo
+dist/
+obj/
+bin/
+diag/
+
+# Desarrollo local (no se publica): bocetos del ícono y la instancia de demostración de las capturas
+assets/diseno/
+_demo/
+
+# Visual Studio / Rider
+.vs/
+.idea/
+*.user
+*.suo
+
+# Varios
+*.bak*
+*.log
+Thumbs.db
