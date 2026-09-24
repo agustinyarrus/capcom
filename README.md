@@ -4,15 +4,15 @@
 
 **Una consola de chat de escritorio para tus modelos locales, con cara de sala de control.**
 
-Un solo `.exe` de ~520 KB, **cero dependencias**. Habla con `llama-server` (llama.cpp) por streaming real,
+Un solo `.exe` de ~560 KB, **cero dependencias**. Habla con `llama-server` (llama.cpp) por streaming real,
 token a token, vive en la bandeja y dibuja todo a mano: el Markdown, el resaltado de código y hasta la telemetría.
 
 ![C#](https://img.shields.io/badge/C%23-.NET%20Framework%204.8-512BD4?logo=dotnet&logoColor=white)
 ![Windows](https://img.shields.io/badge/Windows-10%20%2F%2011-0078D6?logo=windows&logoColor=white)
 ![llama.cpp](https://img.shields.io/badge/motor-llama.cpp-8FD6CC)
 ![Dependencias](https://img.shields.io/badge/dependencias-0-B5DFA8)
-![Size](https://img.shields.io/badge/exe-~520%20KB-F6C0A0)
-![Pruebas](https://img.shields.io/badge/pruebas%20de%20a%20bordo-106-A8CFF2)
+![Size](https://img.shields.io/badge/exe-~560%20KB-F6C0A0)
+![Pruebas](https://img.shields.io/badge/pruebas%20de%20a%20bordo-156-A8CFF2)
 ![License](https://img.shields.io/badge/License-MIT-C4B5FD)
 
 [![Descargar](https://img.shields.io/badge/Descargar-capcom.exe-C4B5FD?style=for-the-badge&logo=github&logoColor=white)](https://github.com/agustinyarrus/capcom/releases/latest)
@@ -35,7 +35,7 @@ Es un cliente de chat para modelos `.gguf` que corren **en tu máquina** con
 
 - **WinForms sobre .NET Framework 4.8**, que ya viene con Windows 10 y 11: no se instala nada.
 - **Cero paquetes**: ni NuGet, ni WebView, ni Electron. P/Invoke contra `user32`, `dwmapi` y GDI.
-- **32 archivos, ~12.500 líneas**, compila en cuatro segundos a un `.exe` de medio mega.
+- **32 archivos, ~13.700 líneas**, compila en cuatro segundos a un `.exe` de medio mega.
 
 ## ✨ Lo que trae
 
@@ -47,7 +47,7 @@ Es un cliente de chat para modelos `.gguf` que corren **en tu máquina** con
 | **Motor de a bordo** | con el modelo apagado contesta lo que se puede **verificar**: cuentas (parser de expresiones propio), fechas, unidades, base64/hash, sorteos, estado de la máquina. Lo que no sabe, lo dice |
 | **Telemetría** | tok/s, latencia del primer token, ventana de contexto usada, memoria, tablero GO / NO-GO y dos series temporales |
 | **Personas** | prompts de sistema con nombre y color, editables desde la app |
-| **Modelos** | inventario de `.gguf` con la RAM que pide cada uno, arranque de un clic, **banco de pruebas** y descarga desde HuggingFace con reanudación |
+| **Modelos** | inventario de `.gguf` con la RAM que pide cada uno, arranque de un clic, **banco de pruebas** y descarga de cualquier repo de HuggingFace, también los que piden iniciar sesión, con reanudación |
 | **Archivo** | cada transmisión en su `.json`, con búsqueda sobre todo el historial, estadísticas y exportación a `.md` |
 | **Bandeja** | minimizar y cerrar la guardan; atajo global **Ctrl+Alt+Espacio**; la galaxia gira mientras el modelo escribe |
 | **Tonos quindar** | 2525 Hz al abrir la transmisión y 2475 Hz al cerrarla: los bips de radio de Apollo, generados en memoria |
@@ -95,10 +95,19 @@ respuestas cortas. En el inventario, cada modelo examinado queda con su nivel al
 
 ### Modelos · descargar
 
-Un catálogo de repos de HuggingFace con modelos chicos que tienen sentido en una notebook sin GPU. La app le
-pregunta a la API qué `.gguf` tiene cada repo y muestra tamaño y cuantización. La descarga va a `.partial` y cada
-reintento manda `Range: bytes=<lo que ya tengo>-`: sin reanudación, un archivo de 2 GB no termina nunca en una red
-que corta las conexiones largas. Al final se verifica el **SHA256** contra el `lfs.oid` que publica la API.
+Un catálogo de repos de HuggingFace con modelos chicos que tienen sentido en una notebook sin GPU y, arriba, un
+buscador para **todo lo demás**: por nombre, por `autor/repo` o pegando un link de huggingface.co. La app le pregunta
+a la API qué `.gguf` tiene cada repo y muestra tamaño y cuantización; un modelo partido en varios archivos
+(`-00001-of-00003`) es una sola fila, se baja entero y recién entonces aparece en el inventario. La descarga va a
+`.partial` y cada reintento manda `Range: bytes=<lo que ya tengo>-`: sin reanudación, un archivo de 2 GB no termina
+nunca en una red que corta las conexiones largas. Al final se verifica el **SHA256** contra el `lfs.oid` que publica
+la API.
+
+Los repos **restringidos** —como los GGUF oficiales de Gemma— y los **privados** piden iniciar sesión: se pega un
+token de [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens) en **AJUSTES → huggingface** —o se
+usa el que ya esté en `HF_TOKEN` o el que dejó `hf auth login`— y la app dice con qué cuenta entró. Al elegir un repo
+avisa, antes de bajar nada, si falta la sesión o aceptar sus condiciones, y **ABRIR EN HF** lleva a la página donde se
+aceptan. El token queda cifrado con la cuenta de Windows y viaja sólo a huggingface.co, nunca a la CDN.
 
 <img src="docs/descargar.png" alt="Descarga de modelos" width="100%">
 
@@ -140,7 +149,8 @@ completa la vuelta y se queda quieta.
    donde se pueda escribir: sus datos van en `datos\`, al lado del exe.
 2. Bajá [llama.cpp](https://github.com/ggml-org/llama.cpp/releases) para Windows y poné `llama-server.exe` al lado
    de `capcom.exe` (o en `bin\`, o en el `PATH`). Si está en otro lado, la ruta se cambia en **AJUSTES**.
-3. Poné algún `.gguf` en `modelos\` — o bajalo desde la propia app, en **MODELOS → descargar**.
+3. Poné algún `.gguf` en `modelos\` — o bajalo desde la propia app, en **MODELOS → descargar**, de cualquier repo
+   de HuggingFace.
 4. Abrí CAPCOM, andá a **MODELOS**, elegí uno y tocá **LEVANTAR**. Cuando el tablero diga NOMINAL, escribí.
 
 > [!NOTE]
@@ -170,7 +180,7 @@ capcom.exe --mostrar             # la abre a la vista aunque «arrancar en la ba
 capcom.exe --modelos             # inventario de .gguf con la RAM que necesita cada uno
 capcom.exe --preguntar "..."     # una pregunta suelta: imprime el streaming en la terminal
 capcom.exe --examen "gemma,qwen" # toma el examen sin interfaz e imprime el informe en Markdown
-capcom.exe --probar              # las 106 pruebas de a bordo
+capcom.exe --probar              # las 156 pruebas de a bordo
 capcom.exe --version
 ```
 
@@ -186,6 +196,7 @@ capcom.exe --bajar                                           # baja el servidor 
 capcom.exe --ir modelos                                      # cambia de pantalla
 capcom.exe --examinar "gemma,qwen3.5-2b"                     # arranca el banco EN la app, con su barra de progreso
 capcom.exe --traer "SmolLM2-1.7B Q2_K"                       # baja ese archivo del catálogo
+capcom.exe --traer "Qwen/Qwen3-8B-GGUF Q4_K_M"               # o de cualquier repo de HuggingFace (autor/repo o su link)
 capcom.exe --foto mision --ancho 2200 --alto 1380            # la app se retrata a sí misma
 capcom.exe --salir                                           # cierra de verdad: guarda, baja su servidor y sale de la bandeja
 ```
@@ -217,10 +228,12 @@ capcom\
   docs\                  las imágenes de esta página
 ```
 
-Las **106 pruebas** corren sin interfaz: el parser de Markdown bloque por bloque, el resaltador con el invariante de
+Las **156 pruebas** corren sin interfaz: el parser de Markdown bloque por bloque, el resaltador con el invariante de
 que no se pierde ni un carácter, el maquetador contra entradas hostiles (una palabra de 500 caracteres, un ancho
 ridículo, una tabla con filas desparejas), el parser de expresiones, el motor de a bordo, el ida y vuelta de los
-`.json` con comillas, barras, saltos y emoji, y que el ícono salga bien de los recursos del exe.
+`.json` con comillas, barras, saltos y emoji, las respuestas de la API de HuggingFace (búsqueda, árbol, modelos
+partidos y qué hacer con cada 401 o 403), de dónde sale el token y que no quede en claro, y que el ícono salga bien
+de los recursos del exe.
 
 ## 🧭 Lo que costó averiguar
 

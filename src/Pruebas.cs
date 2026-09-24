@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
+using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -52,6 +53,12 @@ namespace Capcom
             Grupo("varios");
             ArgumentosDelServidor();
             PuntajeDeLaPaleta();
+
+            Grupo("descargas");
+            BusquedaYArbol();
+            ModelosPartidos();
+            DiagnosticoDeHuggingFace();
+            TokenDeHuggingFace();
 
             Grupo("insignia");
             InsigniaDelExe();
@@ -368,6 +375,133 @@ namespace Capcom
             // no se puede llamar al método privado: se verifica el comportamiento a través del orden esperado
             var l = new List<string> { "Transmisión nueva", "Ir a modelos", "Abrir la carpeta de datos" };
             A(l.Count == 3, "la paleta arranca con comandos cargados");
+        }
+
+        // ------------------------------------------------------------------ descargas
+
+        /// <summary>Sin red: las respuestas de la API se parsean desde muestras con la forma que tienen de verdad.</summary>
+        static void BusquedaYArbol()
+        {
+            Igual("bartowski/Llama-3.2-3B-Instruct-GGUF", Descargas.RepoDe("https://huggingface.co/bartowski/Llama-3.2-3B-Instruct-GGUF/blob/main/x-Q4_K_M.gguf?download=true"),
+                "un link a un archivo se lee como su repo");
+            Igual("unsloth/gemma-3-1b-it-GGUF", Descargas.RepoDe("  unsloth/gemma-3-1b-it-GGUF "), "autor/repo pelado, también");
+            Igual("a/b", Descargas.RepoDe("hf.co/a/b"), "y el dominio corto");
+            Igual("", Descargas.RepoDe("gemma 2b"), "una búsqueda común no es un repo");
+            Igual("", Descargas.RepoDe("https://huggingface.co/datasets/x/y"), "un dataset no es un repo de modelos");
+            Igual("", Descargas.RepoDe("https://huggingface.co/models?search=gemma"), "ni el listado de modelos");
+
+            var rs = Descargas.ParsearBusqueda(
+                "[{\"_id\":\"1\",\"id\":\"google/gemma-3-1b-it-qat-q4_0-gguf\",\"downloads\":123456,\"likes\":321,\"gated\":\"manual\",\"private\":false}," +
+                "{\"_id\":\"2\",\"id\":\"bartowski/SmolLM2-1.7B-Instruct-GGUF\",\"downloads\":5000,\"likes\":0,\"gated\":false,\"private\":false}]");
+            Igual(2, rs.Count, "la búsqueda devuelve los dos repos");
+            A(rs.Count == 2 && rs[0].PideSesion && !rs[1].PideSesion, "«gated» manual pide sesión; «gated» false, no");
+            Igual("gemma-3-1b-it-qat-q4_0-gguf", rs.Count > 0 ? rs[0].Corto : "", "el nombre corto es lo que va después del autor");
+            Igual(123456L, rs.Count > 0 ? rs[0].Bajadas : 0L, "y trae las bajadas");
+
+            string arbol = "[" +
+                "{\"type\":\"directory\",\"oid\":\"d\",\"size\":0,\"path\":\"Q6_K\"}," +
+                "{\"type\":\"file\",\"oid\":\"a\",\"size\":135,\"path\":\"Q6_K/m-Q6_K-00002-of-00002.gguf\",\"lfs\":{\"oid\":\"" + new string('b', 64) + "\",\"size\":2000,\"pointerSize\":135}}," +
+                "{\"type\":\"file\",\"oid\":\"c\",\"size\":135,\"path\":\"Q6_K/m-Q6_K-00001-of-00002.gguf\",\"lfs\":{\"oid\":\"" + new string('a', 64) + "\",\"size\":3000,\"pointerSize\":135}}," +
+                "{\"type\":\"file\",\"oid\":\"e\",\"size\":135,\"path\":\"m-Q4_K_M.gguf\",\"lfs\":{\"oid\":\"" + new string('c', 64) + "\",\"size\":1000,\"pointerSize\":135}}," +
+                "{\"type\":\"file\",\"oid\":\"f\",\"size\":10,\"path\":\"README.md\"}]";
+            var sueltos = Descargas.ParsearArbol(arbol, "a/b");
+            Igual(3, sueltos.Count, "del árbol quedan los tres .gguf (ni la carpeta ni el README)");
+            var q4 = sueltos.FirstOrDefault(x => x.Nombre == "m-Q4_K_M.gguf");
+            A(q4 != null && q4.Bytes == 1000 && q4.Sha256 == new string('c', 64), "con el tamaño y el sha256 del LFS, no los del puntero");
+
+            var filas = Descargas.Agrupar(sueltos);
+            Igual(2, filas.Count, "las dos partes del Q6_K se juntan en una sola fila");
+            var partido = filas.FirstOrDefault(x => x.Partido);
+            A(partido != null && partido.Bytes == 5000, "que pesa lo que suman las partes");
+            A(partido != null && partido.Partes[0].Nombre == "m-Q6_K-00001-of-00002.gguf", "y baja la parte 1 primero aunque la API la liste segunda");
+            Igual("m-Q6_K.gguf  ·  2 partes", partido != null ? partido.Visible : "", "en la lista va sin el -00001-of-00002");
+            var incompleto = Descargas.Agrupar(sueltos.Where(x => x.Nombre != "m-Q6_K-00002-of-00002.gguf").ToList());
+            A(incompleto.All(x => !x.Partido), "si al repo le falta una parte, no se arma un modelo que no levanta");
+
+            Igual("Q4_0", Descargas.Cuantizacion("qwen2.5-1.5b-instruct-q4_0.gguf"), "la q4_0 ya no sale en blanco");
+            Igual("Q4_K_XL", Descargas.Cuantizacion("gemma-3-1b-it-UD-Q4_K_XL.gguf"), "las UD de unsloth");
+            Igual("IQ4_XS", Descargas.Cuantizacion("x-IQ4_XS.gguf"), "las IQ");
+            Igual("BF16", Descargas.Cuantizacion("x-bf16-00001-of-00003.gguf"), "BF16, aunque venga partido");
+            Igual("", Descargas.Cuantizacion("Qwen2.5-7B-Instruct.gguf"), "y «Qwen2» no es una cuantización");
+
+            Igual("https://huggingface.co/a/b/resolve/main/Q6_K/m%20x%2B1.gguf?download=true",
+                new ArchivoRemoto { Repo = "a/b", Ruta = "Q6_K/m x+1.gguf" }.Url, "la ruta del archivo se escapa tramo por tramo");
+            Igual("https://huggingface.co/api/models/a/b/tree/main?recursive=true&cursor=eyJ4Ijo1fQ%3D%3D",
+                Descargas.SiguientePagina("<https://huggingface.co/api/models/a/b/tree/main?recursive=true&cursor=eyJ4Ijo1fQ%3D%3D>; rel=\"next\""),
+                "la página siguiente del árbol sale de la cabecera Link");
+            Igual("", Descargas.SiguientePagina(null), "y sin cabecera no hay más páginas");
+        }
+
+        /// <summary>En el disco: un modelo partido es UN modelo, que pesa lo que suman sus partes.</summary>
+        static void ModelosPartidos()
+        {
+            string dir = Path.Combine(Path.GetTempPath(), "capcom-prueba-" + Guid.NewGuid().ToString("N").Substring(0, 8));
+            try
+            {
+                Directory.CreateDirectory(dir);
+                File.WriteAllBytes(Path.Combine(dir, "m-Q6_K-00001-of-00002.gguf"), new byte[3000]);
+                File.WriteAllBytes(Path.Combine(dir, "m-Q6_K-00002-of-00002.gguf"), new byte[2000]);
+                File.WriteAllBytes(Path.Combine(dir, "solo-Q4_K_M.gguf"), new byte[1000]);
+                File.WriteAllBytes(Path.Combine(dir, "otro-Q8_0.gguf.partial"), new byte[500]);
+                var inv = new Servidor(new Config { CarpetasModelos = new List<string> { dir } }, null).Inventario();
+                Igual(2, inv.Count, "un modelo partido es uno solo en el inventario (y un .partial, ninguno)");
+                var m = inv.FirstOrDefault(x => x.Nombre.StartsWith("m-Q6_K", StringComparison.Ordinal));
+                A(m != null && m.Nombre == "m-Q6_K-00001-of-00002", "se levanta por la parte 1");
+                A(m != null && Math.Abs(m.Gb * 1073741824.0 - 5000) < 1, "y pesa lo que suman sus partes, que es lo que va a pedir de RAM");
+            }
+            finally { try { Directory.Delete(dir, true); } catch { } }
+        }
+
+        static void DiagnosticoDeHuggingFace()
+        {
+            Traba t;
+            string d = Descargas.Diagnosticar(401, "GatedRepo", "Access to model google/gemma is restricted. You must have access to it and be authenticated to access it. Please log in.",
+                false, false, "google/gemma", out t);
+            Igual(Traba.Login, t, "restringido y sin token: falta iniciar sesión");
+            A(d.Contains("AJUSTES") && d.Contains("huggingface.co/google/gemma"), "y dice dónde aceptar las condiciones y dónde va el token");
+            Descargas.Diagnosticar(403, "GatedRepo", "Access to model google/gemma is restricted and you are not in the authorized list. Visit https://huggingface.co/google/gemma to ask for access.",
+                true, false, "google/gemma", out t);
+            Igual(Traba.Licencia, t, "con sesión pero sin aceptar: faltan las condiciones");
+            Descargas.Diagnosticar(403, "GatedRepo", "Your request to access model x/y is awaiting a review from the repo authors.", true, false, "x/y", out t);
+            Igual(Traba.Espera, t, "con el pedido de acceso pendiente, hay que esperar");
+            Descargas.Diagnosticar(401, "", "Invalid credentials in Authorization header", true, false, "x/y", out t);
+            Igual(Traba.TokenMalo, t, "un 401 con token es que el token no sirve");
+            Descargas.Diagnosticar(401, "GatedRepo", "", false, true, "x/y", out t);
+            Igual(Traba.TokenMalo, t, "y si HF ya lo rechazó, el problema sigue siendo el token");
+            Descargas.Diagnosticar(404, "RepoNotFound", "", true, false, "x/y", out t);
+            Igual(Traba.NoExiste, t, "un 404 es que no existe (o esa cuenta no lo ve)");
+            d = Descargas.Diagnosticar(429, "", "", false, false, "x/y", out t);
+            A(t == Traba.Limite && d.Contains("sesión"), "un 429 sin sesión sugiere iniciarla, que sube el límite");
+
+            A(Descargas.LlevaToken(new Uri("https://huggingface.co/a/b/resolve/main/x.gguf")), "el token va a huggingface.co");
+            A(!Descargas.LlevaToken(new Uri("https://cas-bridge.xethub.hf.co/xet-bridge-us/x?X-Amz-Signature=1")), "pero nunca a la CDN, que ya viene firmada");
+            A(!Descargas.LlevaToken(new Uri("https://cdn-lfs.huggingface.co/repos/x")), "ni a la CDN vieja");
+            A(!Descargas.LlevaToken(new Uri("http://huggingface.co/a/b")), "ni por http sin cifrar");
+        }
+
+        static void TokenDeHuggingFace()
+        {
+            var env = new Dictionary<string, string> { ["HF_TOKEN"] = "hf_entorno", ["USERPROFILE"] = @"C:\Users\x" };
+            Func<string, string> entorno = k => env.TryGetValue(k, out var v) ? v : null;
+            string origen, leida = null;
+            Func<string, string> archivo = r => { leida = r; return "hf_archivo\n"; };
+            Igual("hf_ajustes", Descargas.ElegirToken(" Bearer hf_ajustes\n", entorno, archivo, out origen), "manda el token de AJUSTES, limpio");
+            Igual("hf_entorno", Descargas.ElegirToken("", entorno, archivo, out origen), "si no hay, el de HF_TOKEN");
+            env.Remove("HF_TOKEN");
+            Igual("hf_archivo", Descargas.ElegirToken("", entorno, archivo, out origen), "y si tampoco, el que dejó «hf auth login»");
+            Igual(Path.Combine(@"C:\Users\x", ".cache", "huggingface", "token"), leida, "que está donde lo guarda la herramienta oficial");
+            env["HF_HOME"] = @"D:\hf";
+            Descargas.ElegirToken("", entorno, archivo, out origen);
+            Igual(Path.Combine(@"D:\hf", "token"), leida, "o en HF_HOME, si está puesta");
+            env.Remove("HF_HOME");
+            env.Remove("USERPROFILE");
+            Igual("", Descargas.ElegirToken("", entorno, r => "", out origen), "sin nada de eso no hay sesión");
+
+            string cerrado = Secreto.Cerrar("hf_secreto");
+            A(cerrado.StartsWith("dpapi:", StringComparison.Ordinal) && cerrado.IndexOf("hf_secreto", StringComparison.Ordinal) < 0, "el token no queda en claro en config.json");
+            Igual("hf_secreto", Secreto.Abrir(cerrado), "y se vuelve a abrir con la misma cuenta");
+            Igual("", Secreto.Abrir("dpapi:AAAA"), "uno que no se puede abrir vuelve vacío, sin romper nada");
+            Igual("agustin", Descargas.UsuarioDe("{\"type\":\"user\",\"name\":\"agustin\",\"auth\":{\"type\":\"access_token\"}}"), "whoami dice con qué cuenta");
         }
 
         // ------------------------------------------------------------------ insignia

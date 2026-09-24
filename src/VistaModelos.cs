@@ -15,7 +15,8 @@ namespace Capcom
     /// - **inventario**: qué hay en el disco, cuánta RAM pide cada uno, y arranque de un clic (▶ en la fila).
     /// - **examen**: se marcan varios con la casilla y el banco los levanta de a uno, les toma las 20 preguntas
     ///   con corrección automática y arma el ranking. El código se ejecuta de verdad en Node.
-    /// - **descargar**: catálogo de HuggingFace, con reanudación y verificación de SHA256.
+    /// - **descargar**: el catálogo o cualquier repo de HuggingFace que se busque, también los que piden iniciar
+    ///   sesión; con reanudación y verificación de SHA256.
     ///
     /// La tabla dice de entrada lo único que importa antes de apretar: **cuánta RAM hace falta y cuánta hay**.
     /// Cargar un modelo que no entra deja la máquina inutilizable durante minutos, así que la fila va en rojo y
@@ -32,7 +33,7 @@ namespace Capcom
         readonly Chip chInv, chExa, chDes;
         readonly Boton btLevantar, btBajar, btRefrescar, btCopiarCmd, btCarpeta, btExaminar;
         readonly Boton btCortarExamen, btInforme, btBorrarExamen, btCarpetaExamen;
-        readonly Boton btBajarArchivo, btCortarDescarga, btCarpetaDestino;
+        readonly Boton btBajarArchivo, btCortarDescarga, btCarpetaDestino, btAbrirHf, btSesion;
 
         List<ModeloArchivo> modelos = new List<ModeloArchivo>();
         ModeloArchivo elegido;
@@ -53,11 +54,26 @@ namespace Capcom
         Repo repoElegido;
         List<ArchivoRemoto> archivos = new List<ArchivoRemoto>();
         string problemaRepo = "";
+        string avisoAcceso = "";            // lo que dio el HEAD de prueba: «pide iniciar sesión», «aceptá las condiciones»…
+        Traba trabaRepo = Traba.Ninguna;
         volatile bool listando;
         ArchivoRemoto archivoElegido;
         int hoverRepo = -1, hoverArchivo = -1;
+        int desplazRepos, desplazArchivos, maxRepos, maxArchivos, xDivisor;
         readonly List<Rectangle> filasRepo = new List<Rectangle>();
         readonly List<Rectangle> filasArchivo = new List<Rectangle>();
+
+        // --- buscar en todo HuggingFace
+        readonly Campo busqueda;
+        readonly System.Windows.Forms.Timer esperaBusqueda = new System.Windows.Forms.Timer { Interval = 650 };
+        List<Repo> resultados = new List<Repo>();
+        string buscado = "";                // lo último que se mandó a buscar: la respuesta de otra búsqueda se descarta
+        string problemaBusqueda = "";
+        volatile bool buscando;
+        string usuarioVisto = "";
+
+        /// <summary>Pide ir a AJUSTES a poner el token de HuggingFace. Lo atiende MainForm.</summary>
+        public event Action PedirSesion;
 
         public VistaModelos(Nucleo n) : base(n)
         {
@@ -128,10 +144,34 @@ namespace Capcom
             btCarpetaDestino.Accion += (s, e) => { try { System.Diagnostics.Process.Start("explorer.exe", CarpetaDestino); } catch { } };
             Controls.Add(btCarpetaDestino);
 
+            // la página del repo: ahí se aceptan las condiciones de los restringidos, y se lee la ficha del modelo
+            btAbrirHf = new Boton { Text = "ABRIR EN HF", Icono = Boton.Glifo.Afuera, Acento = Tema.Ambar };
+            btAbrirHf.Accion += (s, e) =>
+            {
+                if (repoElegido == null) return;
+                try { System.Diagnostics.Process.Start("https://huggingface.co/" + repoElegido.Ruta); } catch { }
+            };
+            Controls.Add(btAbrirHf);
+
+            btSesion = new Boton { Text = "INICIAR SESIÓN", Icono = Boton.Glifo.Llave, Acento = Tema.Ambar };
+            btSesion.Accion += (s, e) => PedirSesion?.Invoke();
+            Controls.Add(btSesion);
+
+            busqueda = new Campo { Pista = "buscar en todo huggingface: nombre, autor/repo o un link…", Acento = Tema.Cielo, Visible = false };
+            busqueda.Cambio += (s, e) => { esperaBusqueda.Stop(); esperaBusqueda.Start(); };
+            busqueda.Tecla += (s, e) =>
+            {
+                if (e.KeyCode == Keys.Enter) { esperaBusqueda.Stop(); Buscar(true); e.Handled = e.SuppressKeyPress = true; }
+                else if (e.KeyCode == Keys.Escape && busqueda.Texto.Length > 0) { busqueda.Texto = ""; e.Handled = e.SuppressKeyPress = true; }
+            };
+            Controls.Add(busqueda);
+            esperaBusqueda.Tick += (s, e) => { esperaBusqueda.Stop(); Buscar(false); };
+
             N.Banco.Cambio += () => N.EnUi(() => { Botones(); Invalidate(); });
             N.Banco.Fin += () => N.EnUi(() => { Sonidos.Ok(); N.Aviso("Examen terminado", N.Banco.Resultados.Count + " modelos en el ranking"); Invalidate(); });
             N.Bajadas.Cambio += () => N.EnUi(() => { Botones(); Invalidate(); });
-            N.Bajadas.Listo += r => N.EnUi(() => { Refrescar(); Sonidos.Ok(); N.Aviso("Modelo bajado", Path.GetFileName(r)); });
+            N.Bajadas.Listo += r => N.EnUi(() => { Refrescar(); Sonidos.Ok(); N.Aviso("Modelo bajado", Descargas.SinParte(Path.GetFileName(r))); });
+            N.Bajadas.SesionCambio += () => N.EnUi(SesionCambio);
         }
 
         Chip Segmento(string texto, Panel m, Color c)
@@ -147,7 +187,11 @@ namespace Capcom
             panel = m;
             chInv.Activo = m == Panel.Inventario; chExa.Activo = m == Panel.Examen; chDes.Activo = m == Panel.Descargar;
             chInv.Invalidate(); chExa.Invalidate(); chDes.Invalidate();
-            if (m == Panel.Descargar && repoElegido == null && Descargas.Catalogo.Count > 0) ElegirRepo(Descargas.Catalogo[0]);
+            if (m == Panel.Descargar)
+            {
+                if (repoElegido == null && Descargas.Catalogo.Count > 0) ElegirRepo(Descargas.Catalogo[0]);
+                N.Bajadas.Sesionar();
+            }
             if (m == Panel.Examen && examenElegido == null) examenElegido = N.Banco.Resultados.FirstOrDefault();
             Botones();
             Acomodar();
@@ -180,7 +224,7 @@ namespace Capcom
             bool inv = panel == Panel.Inventario, exa = panel == Panel.Examen, des = panel == Panel.Descargar;
             btLevantar.Visible = btBajar.Visible = btCopiarCmd.Visible = btCarpeta.Visible = btRefrescar.Visible = btExaminar.Visible = inv;
             btCortarExamen.Visible = btInforme.Visible = btBorrarExamen.Visible = btCarpetaExamen.Visible = exa;
-            btBajarArchivo.Visible = btCortarDescarga.Visible = btCarpetaDestino.Visible = des;
+            btBajarArchivo.Visible = btCortarDescarga.Visible = btCarpetaDestino.Visible = btAbrirHf.Visible = btSesion.Visible = busqueda.Visible = des;
 
             bool vivo = N.Cli.Estado.Señal == Señal.Nominal;
             double libre, total;
@@ -201,8 +245,17 @@ namespace Capcom
 
             btBajarArchivo.Enabled = !N.Bajadas.Bajando && archivoElegido != null;
             btCortarDescarga.Enabled = N.Bajadas.Bajando;
+            btAbrirHf.Enabled = repoElegido != null;
+            string usuario = N.Bajadas.Usuario;
+            btSesion.Text = usuario.Length > 0 ? "SESIÓN · " + usuario.ToUpperInvariant() : N.Bajadas.HayToken ? "SESIÓN HF" : "INICIAR SESIÓN";
+            // se destaca el botón que destraba el repo elegido: sin sesión, la sesión; sin aceptar, la página del repo
+            bool faltaSesion = trabaRepo == Traba.Login || trabaRepo == Traba.TokenMalo;
+            bool faltaAceptar = trabaRepo == Traba.Licencia || trabaRepo == Traba.Espera;
+            btSesion.Primario = faltaSesion;
+            btAbrirHf.Primario = faltaAceptar;
+            btBajarArchivo.Primario = !faltaSesion && !faltaAceptar;
 
-            foreach (var b in new[] { btLevantar, btBajar, btCopiarCmd, btCarpeta, btExaminar, btCortarExamen, btInforme, btBorrarExamen, btBajarArchivo, btCortarDescarga })
+            foreach (var b in new[] { btLevantar, btBajar, btCopiarCmd, btCarpeta, btExaminar, btCortarExamen, btInforme, btBorrarExamen, btBajarArchivo, btCortarDescarga, btAbrirHf, btSesion })
                 b.Invalidate();
             Acomodar();
         }
@@ -368,12 +421,19 @@ namespace Capcom
             archivos = new List<ArchivoRemoto>();
             archivoElegido = null;
             problemaRepo = "";
+            avisoAcceso = "";
+            trabaRepo = Traba.Ninguna;
+            desplazArchivos = 0;
             listando = true;
+            Botones();
             Invalidate();
             new Thread(() =>
             {
                 string porque;
-                var l = N.Bajadas.Listar(r, out porque);
+                Traba traba;
+                var l = N.Bajadas.Listar(r, out porque, out traba);
+                // con la lista en la mano, un HEAD al primero dice si hace falta sesión ANTES de apretar BAJAR
+                string aviso = l.Count > 0 ? N.Bajadas.Acceso(l[0], out traba) : "";
                 N.EnUi(() =>
                 {
                     // 🚨 carrera real: al entrar al panel se lista el primer repo en un hilo, y si mientras tanto
@@ -384,8 +444,11 @@ namespace Capcom
                     listando = false;
                     archivos = l;
                     problemaRepo = porque;
-                    // preseleccionar la cuantización recomendada del repo
-                    archivoElegido = l.FirstOrDefault(a => a.Nombre.IndexOf(r.Prefiere, StringComparison.OrdinalIgnoreCase) >= 0)
+                    avisoAcceso = aviso;
+                    trabaRepo = traba;
+                    // preseleccionar la cuantización recomendada del repo (y nunca un proyector de visión, si hay otra cosa)
+                    archivoElegido = l.FirstOrDefault(a => r.Prefiere.Length > 0 && a.Nombre.IndexOf(r.Prefiere, StringComparison.OrdinalIgnoreCase) >= 0)
+                                  ?? l.FirstOrDefault(a => a.Nombre.IndexOf("mmproj", StringComparison.OrdinalIgnoreCase) < 0)
                                   ?? l.FirstOrDefault();
                     Botones();
                     Invalidate();
@@ -394,8 +457,74 @@ namespace Capcom
             { IsBackground = true, Name = "capcom-listar" }.Start();
         }
 
+        bool HayBusqueda => buscado.Length > 0;
+        List<Repo> ReposVisibles => HayBusqueda ? resultados : Descargas.Catalogo;
+
         /// <summary>
-        /// Busca en el catálogo y arranca la descarga. `q` es «repo archivo», por ejemplo `qwen3.5-1.5b q2_k`.
+        /// Busca en todo HuggingFace lo que diga el campo. Un `autor/repo` o un link van directo a ese repo sin pasar
+        /// por la búsqueda: así se llega también a los privados, que la búsqueda no muestra.
+        /// </summary>
+        void Buscar(bool forzar)
+        {
+            string q = busqueda.Texto.Trim();
+            if (q == buscado && !forzar) return;
+            buscado = q;
+            desplazRepos = 0;
+            problemaBusqueda = "";
+            buscando = false;
+            resultados = new List<Repo>();
+            if (q.Length == 0) { Invalidate(); return; }
+            string directo = Descargas.RepoDe(q);
+            if (directo.Length > 0)
+            {
+                var r = Descargas.Catalogo.FirstOrDefault(c => string.Equals(c.Ruta, directo, StringComparison.OrdinalIgnoreCase));
+                if (r == null)
+                {
+                    r = new Repo { Nombre = directo, Ruta = directo, Buscado = true, Prefiere = "Q4_K_M" };
+                    r.Nota = r.Autor + " · directo, sin buscar";
+                }
+                resultados.Add(r);
+                ElegirRepo(r);
+                return;
+            }
+            buscando = true;
+            Invalidate();
+            new Thread(() =>
+            {
+                string porque;
+                var l = N.Bajadas.Buscar(q, out porque);
+                N.EnUi(() =>
+                {
+                    if (q != buscado) return;       // mientras tanto se buscó otra cosa: esta respuesta ya no sirve
+                    buscando = false;
+                    resultados = l;
+                    problemaBusqueda = porque;
+                    Invalidate();
+                });
+            })
+            { IsBackground = true, Name = "capcom-buscar" }.Start();
+        }
+
+        public void FocoBusqueda() { busqueda.Caja.Focus(); busqueda.Caja.SelectAll(); }
+
+        /// <summary>
+        /// Cambió la sesión de HuggingFace. Si recién se entró y el repo elegido estaba trabado por falta de sesión, se
+        /// vuelve a probar solo: pegar el token en AJUSTES y volver alcanza.
+        /// </summary>
+        void SesionCambio()
+        {
+            string u = N.Bajadas.Usuario;
+            bool entro = u.Length > 0 && u != usuarioVisto;
+            usuarioVisto = u;
+            if (entro && repoElegido != null && !listando && (trabaRepo == Traba.Login || trabaRepo == Traba.TokenMalo || problemaRepo.Length > 0))
+                ElegirRepo(repoElegido);
+            Botones();
+            Invalidate();
+        }
+
+        /// <summary>
+        /// Busca el repo y arranca la descarga. `q` es «repo archivo», por ejemplo `qwen3.5-1.5b q2_k`: el repo es uno
+        /// del catálogo o cualquier `autor/repo` de HuggingFace (o su link), y el archivo, un pedazo de su nombre.
         /// Lo usa la orden `--traer` y también sirve para dejar bajando algo desde la terminal.
         /// </summary>
         public bool TraerPorNombre(string q, out string porque)
@@ -405,35 +534,71 @@ namespace Capcom
             if (partes.Length == 0) { porque = "uso: --traer \"<repo> <cuantización>\""; return false; }
             var r = Descargas.Catalogo.FirstOrDefault(c => c.Nombre.IndexOf(partes[0], StringComparison.OrdinalIgnoreCase) >= 0
                                                         || c.Ruta.IndexOf(partes[0], StringComparison.OrdinalIgnoreCase) >= 0);
-            if (r == null) { porque = "no hay ningún repo que diga «" + partes[0] + "»"; return false; }
+            string directo = Descargas.RepoDe(partes[0]);
+            if (r == null && directo.Length > 0) r = new Repo { Nombre = directo, Ruta = directo, Buscado = true, Prefiere = "Q4_K_M" };
+            if (r == null) { porque = "no hay ningún repo del catálogo que diga «" + partes[0] + "» · para cualquier otro, pasá autor/repo"; return false; }
             string pp;
-            var lista = N.Bajadas.Listar(r, out pp);
+            Traba traba;
+            var lista = N.Bajadas.Listar(r, out pp, out traba);
             if (lista.Count == 0) { porque = pp.Length > 0 ? pp : "el repo no tiene .gguf"; return false; }
             string filtro = partes.Length > 1 ? partes[1].Trim() : r.Prefiere;
-            var a = lista.FirstOrDefault(x => x.Nombre.IndexOf(filtro, StringComparison.OrdinalIgnoreCase) >= 0) ?? lista.First();
+            // sin esa cuantización en el repo, el más liviano que NO sea un proyector de visión
+            var a = lista.FirstOrDefault(x => x.Nombre.IndexOf(filtro, StringComparison.OrdinalIgnoreCase) >= 0)
+                 ?? lista.FirstOrDefault(x => x.Nombre.IndexOf("mmproj", StringComparison.OrdinalIgnoreCase) < 0)
+                 ?? lista.First();
             PonerPanel(Panel.Descargar);
             repoElegido = r;
             archivos = lista;
             archivoElegido = a;
+            problemaRepo = "";
+            avisoAcceso = N.Bajadas.Acceso(a, out traba);
+            trabaRepo = traba;
             Botones();
             Invalidate();
+            if (avisoAcceso.Length > 0) { porque = avisoAcceso; return false; }
             if (!N.Bajadas.Bajar(a, CarpetaDestino, out porque)) return false;
-            porque = a.Nombre + " · " + Tema.Bytes(a.Bytes);
+            porque = a.Visible + " · " + Tema.Bytes(a.Bytes);
             return true;
         }
 
         void BajarArchivo()
         {
-            if (archivoElegido == null) return;
-            string porque;
-            if (!N.Bajadas.Bajar(archivoElegido, CarpetaDestino, out porque))
+            if (archivoElegido == null || N.Bajadas.Bajando) return;
+            var a = archivoElegido;
+            var r = repoElegido;
+            if (trabaRepo == Traba.Ninguna) { Arrancar(a); return; }
+            // el repo estaba trabado: se vuelve a probar antes, que quizás ya se aceptaron las condiciones o se puso el token
+            avisoAcceso = "volviendo a probar el acceso…";
+            Invalidate();
+            new Thread(() =>
             {
-                problemaRepo = porque;
+                Traba t;
+                string aviso = N.Bajadas.Acceso(a, out t);
+                N.EnUi(() =>
+                {
+                    if (repoElegido != r) return;
+                    avisoAcceso = aviso;
+                    trabaRepo = t;
+                    Botones();
+                    Invalidate();
+                    if (t == Traba.Ninguna) Arrancar(a);
+                    else N.Log.Aviso("Descarga: " + aviso);
+                });
+            })
+            { IsBackground = true, Name = "capcom-acceso" }.Start();
+        }
+
+        void Arrancar(ArchivoRemoto a)
+        {
+            string porque;
+            if (!N.Bajadas.Bajar(a, CarpetaDestino, out porque))
+            {
+                avisoAcceso = porque;
                 N.Log.Aviso("Descarga: " + porque);
                 Invalidate();
                 return;
             }
-            N.Log.Info("Bajando " + archivoElegido.Nombre + " (" + Tema.Bytes(archivoElegido.Bytes) + ") a " + CarpetaDestino);
+            N.Log.Info("Bajando " + a.Visible + " (" + Tema.Bytes(a.Bytes) + ") a " + CarpetaDestino);
         }
 
         public override void Modo(string que)
@@ -443,6 +608,15 @@ namespace Capcom
             if (q == "examen") { PonerPanel(Panel.Examen); return; }
             if (q == "descargar" || q == "bajar") { PonerPanel(Panel.Descargar); return; }
             if (q == "inventario") { PonerPanel(Panel.Inventario); return; }
+            if (q.StartsWith("buscar ", StringComparison.Ordinal))
+            {
+                // para --foto: `--modo "buscar gemma"` deja la búsqueda hecha en el panel de descargas
+                PonerPanel(Panel.Descargar);
+                busqueda.Texto = que.Trim().Substring(7).Trim();
+                esperaBusqueda.Stop();
+                Buscar(true);
+                return;
+            }
             var m = modelos.FirstOrDefault(x => x.Nombre.IndexOf(q, StringComparison.OrdinalIgnoreCase) >= 0);
             if (m != null) { elegido = m; Botones(); }
             Invalidate();
@@ -472,11 +646,17 @@ namespace Capcom
                     btCarpetaExamen.SetBounds(Width - S(12) - btCarpetaExamen.AnchoDeseado, yb, btCarpetaExamen.AnchoDeseado, S(26));
                     break;
                 case Panel.Descargar:
-                    Boton.Fila(x, yb, S(26), S(8), btBajarArchivo, btCortarDescarga);
+                    Boton.Fila(x, yb, S(26), S(8), btBajarArchivo, btCortarDescarga, btAbrirHf, btSesion);
                     btCarpetaDestino.SetBounds(Width - S(12) - btCarpetaDestino.AnchoDeseado, yb, btCarpetaDestino.AnchoDeseado, S(26));
+                    // el buscador va debajo del rótulo de la columna izquierda; la lista de repos arranca donde termina él
+                    busqueda.SetBounds(x, YColumnas + S(20), AnchoCatalogo(Width - S(24)), S(28));
                     break;
             }
         }
+
+        /// <summary>Donde arrancan las columnas de DESCARGAR: debajo de la ficha del servidor (lo que devuelve PanelEstado).</summary>
+        int YColumnas => S(66) + S(42) + S(7);
+        int AnchoCatalogo(int w) => Math.Min(S(320), w / 2 - S(10));
 
         // ------------------------------------------------------------------ interacción
 
@@ -549,10 +729,17 @@ namespace Capcom
                 if (i >= 0 && i < N.Banco.Resultados.Count) { examenElegido = N.Banco.Resultados[i]; Botones(); Invalidate(); }
                 return;
             }
+            var repos = ReposVisibles;
             int ir = filasRepo.FindIndex(r => r.Contains(e.Location));
-            if (ir >= 0 && ir < Descargas.Catalogo.Count) { ElegirRepo(Descargas.Catalogo[ir]); return; }
+            if (ir >= 0 && ir < repos.Count) { ElegirRepo(repos[ir]); return; }
             int ia = filasArchivo.FindIndex(r => r.Contains(e.Location));
-            if (ia >= 0 && ia < archivos.Count) { archivoElegido = archivos[ia]; Botones(); Invalidate(); }
+            if (ia >= 0 && ia < archivos.Count)
+            {
+                archivoElegido = archivos[ia];
+                if (trabaRepo == Traba.Ninguna) avisoAcceso = "";      // «ya lo tenés» era del archivo anterior; una traba es del repo
+                Botones();
+                Invalidate();
+            }
         }
 
         protected override void OnMouseWheel(MouseEventArgs e)
@@ -567,6 +754,10 @@ namespace Capcom
                 int max = Math.Max(0, N.Banco.Resultados.Count * AltoFila - AltoTabla);
                 desplazExamen = Math.Max(0, Math.Min(max, desplazExamen - Math.Sign(e.Delta) * AltoFila * 2));
             }
+            else if (e.X < xDivisor)
+                desplazRepos = Math.Max(0, Math.Min(maxRepos, desplazRepos - Math.Sign(e.Delta) * S(34) * 2));
+            else
+                desplazArchivos = Math.Max(0, Math.Min(maxArchivos, desplazArchivos - Math.Sign(e.Delta) * S(26) * 3));
             Invalidate();
             base.OnMouseWheel(e);
         }
@@ -589,7 +780,7 @@ namespace Capcom
 
             string derecha = panel == Panel.Inventario ? modelos.Count(m => !m.EsProyector) + " modelos · " + libre.ToString("0.0") + " GB libres"
                            : panel == Panel.Examen ? N.Banco.Resultados.Count + " evaluados · " + Examen.Preguntas.Count + " preguntas"
-                           : Descargas.Catalogo.Count + " repos · destino " + Path.GetFileName(CarpetaDestino);
+                           : "destino " + Path.GetFileName(CarpetaDestino) + " · huggingface: " + N.Bajadas.Sesion;
             Tema.Rotulo(g, "03", panel == Panel.Inventario ? "inventario de modelos" : panel == Panel.Examen ? "banco de pruebas" : "descargar modelos",
                 new Rectangle(x, S(12), w, S(14)), panel == Panel.Inventario ? Tema.Ambar : panel == Panel.Examen ? Tema.Malva : Tema.Cielo, esc, derecha);
 
@@ -968,54 +1159,90 @@ namespace Capcom
 
         void Descargar(Graphics g, int x, int y, int w)
         {
-            int anchoIzq = Math.Min(S(300), w / 2 - S(10));
-            Tema.Rotulo(g, "", "catálogo", new Rectangle(x, y, anchoIzq, S(14)), Tema.Cielo, esc);
-            Tema.Rotulo(g, "", repoElegido != null ? "archivos de " + repoElegido.Nombre : "archivos",
-                new Rectangle(x + anchoIzq + S(16), y, w - anchoIzq - S(16), S(14)), Tema.Crema, esc,
+            int anchoIzq = AnchoCatalogo(w);
+            int xa = x + anchoIzq + S(16), wa = w - anchoIzq - S(16);
+            xDivisor = xa - S(8);
+            var repos = ReposVisibles;
+            string cuantos = buscando ? "buscando…"
+                           : !HayBusqueda ? Descargas.Catalogo.Count + " repos"
+                           : resultados.Count >= Descargas.TopeBusqueda ? "los " + resultados.Count + " más bajados"
+                           : resultados.Count + (resultados.Count == 1 ? " repo" : " repos");
+            Tema.Rotulo(g, "", HayBusqueda ? "huggingface" : "catálogo", new Rectangle(x, y, anchoIzq, S(14)), Tema.Cielo, esc, cuantos);
+            Tema.Rotulo(g, "", repoElegido != null ? "archivos de " + (repoElegido.Buscado ? repoElegido.Ruta : repoElegido.Nombre) : "archivos",
+                new Rectangle(xa, y, wa, S(14)), Tema.Crema, esc,
                 listando ? "leyendo la API…" : archivos.Count > 0 ? archivos.Count + " gguf" : "");
             y += S(22);
 
-            int alto = Height - y - S(96);
+            int fondo = Height - S(96);
             var fN = Tema.Fina(9f);
             var fD = Tema.Mono(8f);
 
-            // --- repos
-            int yy = y;
-            for (int i = 0; i < Descargas.Catalogo.Count; i++, yy += S(34))
+            // --- repos: el catálogo o lo que se buscó, debajo del buscador
+            int yLista = busqueda.Bottom + S(8);
+            int altoLista = Math.Max(S(34), fondo - yLista);
+            maxRepos = Math.Max(0, repos.Count * S(34) - altoLista);
+            desplazRepos = Math.Min(desplazRepos, maxRepos);
+            int yy = yLista - desplazRepos;
+            for (int i = 0; i < repos.Count; i++, yy += S(34))
             {
-                var r = Descargas.Catalogo[i];
+                var r = repos[i];
                 var rf = new Rectangle(x, yy, anchoIzq, S(32));
-                filasRepo.Add(rf);
+                // 🚨 sólo las filas que entran ENTERAS: TextRenderer no respeta el Clip, y una fila corrida hacia
+                //    arriba quedaba clickeable encima del buscador
+                bool entra = yy >= yLista && yy + S(34) <= yLista + altoLista;
+                filasRepo.Add(entra ? rf : Rectangle.Empty);
+                if (!entra) continue;
                 bool sel = repoElegido != null && repoElegido.Ruta == r.Ruta;
                 bool hov = hoverRepo == i;
                 if (sel || hov)
                     using (var b = new SolidBrush(sel ? Tema.Alpha(Tema.Consola, 235) : Tema.Alpha(Tema.Consola, 130))) g.FillRectangle(b, rf);
                 if (sel) using (var b = new SolidBrush(Tema.Alpha(Tema.Cielo, 220))) g.FillRectangle(b, rf.X, rf.Y, S(2), rf.Height);
-                Tema.Texto_(g, r.Nombre, fN, sel ? Tema.Texto : Tema.Alpha(Tema.Suave, 215), new Rectangle(rf.X + S(10), rf.Y + S(2), rf.Width - S(70), S(15)),
+                // a la derecha: el peso aproximado (catálogo) o el candado de los que piden sesión (búsqueda)
+                int wDer = S(6);
+                if (r.PideSesion)
+                {
+                    string candado = r.Privado ? "PRIVADO" : "LOGIN";
+                    wDer = Tema.MedirTracking(g, candado, Tema.Media(7f), S(1)) + S(14);
+                    Tema.Tracking(g, candado, Tema.Media(7f), Tema.Ambar, rf.Right - wDer + S(6), rf.Y + S(2), S(15), S(1));
+                }
+                else if (!r.Buscado)
+                {
+                    wDer = S(64);
+                    Tema.Texto_(g, "~" + r.GbAprox.ToString("0.0") + " GB", fD, Tema.Alpha(Tema.Apagado, 200), new Rectangle(rf.Right - S(64), rf.Y + S(2), S(58), S(15)), TextFormatFlags.Right | TextFormatFlags.VerticalCenter);
+                }
+                Tema.Texto_(g, r.Buscado ? r.Corto : r.Nombre, fN, sel ? Tema.Texto : Tema.Alpha(Tema.Suave, 215), new Rectangle(rf.X + S(10), rf.Y + S(2), rf.Width - S(16) - wDer, S(15)),
                     TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
-                Tema.Texto_(g, "~" + r.GbAprox.ToString("0.0") + " GB", fD, Tema.Alpha(Tema.Apagado, 200), new Rectangle(rf.Right - S(64), rf.Y + S(2), S(58), S(15)), TextFormatFlags.Right | TextFormatFlags.VerticalCenter);
                 Tema.Texto_(g, r.Nota, Tema.Fina(8f), Tema.Fantasma, new Rectangle(rf.X + S(10), rf.Y + S(16), rf.Width - S(16), S(14)),
                     TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
             }
+            Barrita(g, x + anchoIzq + S(3), yLista, altoLista, desplazRepos, maxRepos);
+            if (repos.Count == 0)
+                Tema.Texto_(g, buscando ? "preguntándole a huggingface.co…" : problemaBusqueda, Tema.Fina(9f), buscando ? Tema.Apagado : Tema.Rosa,
+                    new Rectangle(x + S(4), yLista + S(6), anchoIzq - S(8), S(60)), TextFormatFlags.Left | TextFormatFlags.Top | TextFormatFlags.WordBreak);
 
             // --- archivos del repo
-            int xa = x + anchoIzq + S(16), wa = w - anchoIzq - S(16);
-            using (var p = new Pen(Tema.Alpha(Tema.Filete, 200), 1f)) g.DrawLine(p, xa - S(8), y - S(14), xa - S(8), y + alto);
+            using (var p = new Pen(Tema.Alpha(Tema.Filete, 200), 1f)) g.DrawLine(p, xDivisor, y - S(14), xDivisor, fondo);
+            int ya = y;
+            string cartel = problemaRepo.Length > 0 ? problemaRepo : avisoAcceso;
             if (listando)
-                Tema.Texto_(g, "preguntándole a huggingface.co qué archivos tiene…", Tema.Fina(9f), Tema.Apagado, new Rectangle(xa, y + S(6), wa, S(20)));
-            else if (problemaRepo.Length > 0)
-                Tema.Texto_(g, problemaRepo, Tema.Fina(9f), Tema.Rosa, new Rectangle(xa, y + S(6), wa, S(40)), TextFormatFlags.Left | TextFormatFlags.Top | TextFormatFlags.WordBreak);
+                Tema.Texto_(g, "preguntándole a huggingface.co qué archivos tiene…", Tema.Fina(9f), Tema.Apagado, new Rectangle(xa, ya + S(6), wa, S(20)));
             else
             {
+                if (cartel.Length > 0) ya = Cartel(g, new Rectangle(xa, ya, wa, 0), cartel, trabaRepo) + S(8);
                 double libre, total;
                 Win32.Memoria(out libre, out total);
-                yy = y;
+                int altoArchivos = Math.Max(S(26), fondo - ya);
+                maxArchivos = Math.Max(0, archivos.Count * S(26) - altoArchivos);
+                desplazArchivos = Math.Min(desplazArchivos, maxArchivos);
+                yy = ya - desplazArchivos;
                 var yaTengo = new HashSet<string>(modelos.Select(m => m.Nombre), StringComparer.OrdinalIgnoreCase);
-                for (int i = 0; i < archivos.Count && yy < y + alto; i++, yy += S(26))
+                for (int i = 0; i < archivos.Count; i++, yy += S(26))
                 {
                     var a = archivos[i];
                     var rf = new Rectangle(xa, yy, wa, S(24));
-                    filasArchivo.Add(rf);
+                    bool entra = yy >= ya && yy + S(26) <= ya + altoArchivos;
+                    filasArchivo.Add(entra ? rf : Rectangle.Empty);
+                    if (!entra) continue;
                     bool sel = archivoElegido != null && archivoElegido.Ruta == a.Ruta;
                     bool hov = hoverArchivo == i;
                     bool tengo = yaTengo.Contains(Path.GetFileNameWithoutExtension(a.Nombre));
@@ -1023,24 +1250,28 @@ namespace Capcom
                         using (var b = new SolidBrush(sel ? Tema.Alpha(Tema.Consola, 235) : Tema.Alpha(Tema.Consola, 130))) g.FillRectangle(b, rf);
                     if (sel) using (var b = new SolidBrush(Tema.Alpha(Tema.Cielo, 220))) g.FillRectangle(b, rf.X, rf.Y, S(2), rf.Height);
                     var ct = tengo ? Tema.Fantasma : sel ? Tema.Texto : Tema.Alpha(Tema.Suave, 215);
-                    Tema.Texto_(g, a.Nombre, fN, ct, new Rectangle(rf.X + S(10), rf.Y, rf.Width - S(190), rf.Height), TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+                    Tema.Texto_(g, a.Visible, fN, ct, new Rectangle(rf.X + S(10), rf.Y, rf.Width - S(190), rf.Height), TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
                     Tema.Texto_(g, a.Cuant, fD, Tema.Alpha(Tema.Crema, 190), new Rectangle(rf.Right - S(178), rf.Y, S(66), rf.Height), TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
                     Tema.Texto_(g, a.Gb.ToString("0.00") + " GB", fD, a.Gb + 1 < libre ? Tema.Suave : Tema.Ambar, new Rectangle(rf.Right - S(112), rf.Y, S(62), rf.Height), TextFormatFlags.Right | TextFormatFlags.VerticalCenter);
                     if (tengo) Tema.Tracking(g, "YA ESTÁ", Tema.Media(7f), Tema.Salvia, rf.Right - S(44), rf.Y, rf.Height, S(1));
-                    else if (a.Sha256.Length == 64) Tema.Tracking(g, "SHA", Tema.Media(7f), Tema.Alpha(Tema.Fantasma, 220), rf.Right - S(30), rf.Y, rf.Height, S(1));
+                    else if (a.Partido ? a.Partes.All(pa => pa.Sha256.Length == 64) : a.Sha256.Length == 64)
+                        Tema.Tracking(g, "SHA", Tema.Media(7f), Tema.Alpha(Tema.Fantasma, 220), rf.Right - S(30), rf.Y, rf.Height, S(1));
                 }
-                if (archivos.Count == 0)
-                    Tema.Texto_(g, "elegí un repo de la izquierda", Tema.Fina(9f), Tema.Fantasma, new Rectangle(xa, y + S(6), wa, S(20)));
+                Barrita(g, x + w + S(4), ya, altoArchivos, desplazArchivos, maxArchivos);
+                if (archivos.Count == 0 && cartel.Length == 0)
+                    Tema.Texto_(g, "elegí un repo de la izquierda, o buscá cualquiera de huggingface con el campo de arriba", Tema.Fina(9f), Tema.Fantasma,
+                        new Rectangle(xa, ya + S(6), wa, S(20)));
             }
 
             // --- progreso de la descarga
             int yP = Height - S(86);
             using (var p = new Pen(Tema.Alpha(Tema.Filete, 220), 1f)) g.DrawLine(p, x, yP - S(6), x + w, yP - S(6));
             var d2 = N.Bajadas;
-            if (d2.Bajando && d2.Actual != null)
+            var actual = d2.Actual;
+            if (d2.Bajando && actual != null)
             {
                 Tema.Tracking(g, "BAJANDO", Tema.Media(8f), Tema.Cielo, x + S(4), yP, S(14), S(2));
-                Tema.Texto_(g, d2.Actual.Nombre, Tema.Mono(8f), Tema.Texto, new Rectangle(x + S(84), yP, w - S(300), S(14)), TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+                Tema.Texto_(g, actual.Visible, Tema.Mono(8f), Tema.Texto, new Rectangle(x + S(84), yP, w - S(300), S(14)), TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
                 string der = Tema.Bytes(d2.Hechos) + " de " + Tema.Bytes(d2.Totales) +
                              (d2.BytesPorSeg > 1024 ? "  ·  " + Tema.Bytes(d2.BytesPorSeg) + "/s" : "") +
                              (d2.Falta.TotalSeconds > 1 ? "  ·  faltan " + (d2.Falta.TotalMinutes >= 1 ? ((int)d2.Falta.TotalMinutes) + " min" : ((int)d2.Falta.TotalSeconds) + " s") : "");
@@ -1051,13 +1282,43 @@ namespace Capcom
             else
             {
                 string s = d2.Estado.Length > 0 ? d2.Estado : "nada en curso";
-                Tema.Texto_(g, s, Tema.Fina(9f), d2.Estado.IndexOf("listo", StringComparison.OrdinalIgnoreCase) >= 0 ? Tema.Salvia : Tema.Fantasma,
-                    new Rectangle(x + S(4), yP, w - S(8), S(16)));
+                var cs = d2.Estado.IndexOf("listo", StringComparison.OrdinalIgnoreCase) >= 0 ? Tema.Salvia
+                       : d2.UltimaTraba != Traba.Ninguna ? Tema.Ambar : Tema.Fantasma;
+                Tema.Texto_(g, s, Tema.Fina(9f), cs, new Rectangle(x + S(4), yP, w - S(8), S(16)), TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
                 if (archivoElegido != null)
-                    Tema.Texto_(g, "elegido: " + archivoElegido.Nombre + "  ·  " + Tema.Bytes(archivoElegido.Bytes) + "  →  " + CarpetaDestino,
+                    Tema.Texto_(g, "elegido: " + archivoElegido.Visible + "  ·  " + Tema.Bytes(archivoElegido.Bytes) + "  →  " + CarpetaDestino,
                         Tema.Fina(8.5f), Tema.Alpha(Tema.Suave, 200), new Rectangle(x + S(4), yP + S(18), w - S(8), S(16)),
                         TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
             }
+        }
+
+        /// <summary>
+        /// Un aviso en recuadro arriba de la lista de archivos: qué traba hay y qué hacer. Ámbar si se destraba con
+        /// la cuenta (sesión, condiciones), rosa si es otra cosa. Mide su texto y devuelve dónde termina.
+        /// </summary>
+        int Cartel(Graphics g, Rectangle r, string texto, Traba t)
+        {
+            var c = t == Traba.Login || t == Traba.TokenMalo || t == Traba.Licencia || t == Traba.Espera ? Tema.Ambar
+                  : t == Traba.Ninguna ? Tema.Cielo : Tema.Rosa;
+            var f = Tema.Fina(8.5f);
+            int wt = r.Width - S(34);
+            int ht = TextRenderer.MeasureText(g, texto, f, new Size(wt, int.MaxValue), TextFormatFlags.WordBreak | TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix).Height;
+            var rc = new Rectangle(r.X, r.Y, r.Width, ht + S(14));
+            Tema.Placa(g, rc, S(2), Tema.Mezcla(Tema.Fondo, c, 0.08f), Tema.Alpha(c, 90));
+            using (var b = new SolidBrush(Tema.Alpha(c, 220))) g.FillRectangle(b, rc.X, rc.Y, S(2), rc.Height);
+            Tema.Diodo(g, rc.X + S(13), rc.Y + S(7) + Tema.Medir(g, "X", f).Height / 2f, S(4), c, true, 0.5f);
+            Tema.Texto_(g, texto, f, Tema.Alpha(c, 235), new Rectangle(rc.X + S(24), rc.Y + S(7), wt, ht + S(2)),
+                TextFormatFlags.Left | TextFormatFlags.Top | TextFormatFlags.WordBreak);
+            return rc.Bottom;
+        }
+
+        /// <summary>La barrita de desplazamiento, como en REGISTRO: sólo si hay más de lo que se ve.</summary>
+        void Barrita(Graphics g, int x, int y, int alto, int desplaz, int max)
+        {
+            if (max <= 0 || alto <= 0) return;
+            int hb = Math.Max(S(24), (int)((double)alto / (alto + max) * alto));
+            int yb = y + (int)((double)desplaz / max * (alto - hb));
+            using (var b = new SolidBrush(Tema.Alpha(Tema.Suave, 55))) g.FillRectangle(b, x, yb, S(2), hb);
         }
     }
 }

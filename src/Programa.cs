@@ -219,7 +219,7 @@ namespace Capcom
                 n.Srv = new Servidor(cfg, log);
                 n.Arch = new Archivo(CarpetaDatos, log);
                 n.Banco = new Banco(cfg, log, CarpetaDatos);
-                n.Bajadas = new Descargas(log);
+                n.Bajadas = new Descargas(log, cfg);
                 n.Tx = new Transmisor(n);
                 n.Actual = n.Arch.Lista.FirstOrDefault() ?? n.Arch.Nueva(cfg.PersonaActiva);
 

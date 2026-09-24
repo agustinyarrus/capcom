@@ -65,12 +65,17 @@ namespace Capcom
                         if (!f.EndsWith(".gguf", StringComparison.OrdinalIgnoreCase)) continue;
                         var fi = new FileInfo(f);
                         string nombre = Path.GetFileNameWithoutExtension(f);
+                        // un modelo partido (`-00001-of-00003`) se levanta por la parte 1 y llama.cpp busca las otras
+                        // al lado: las demás no son modelos, y lo que cuenta para la RAM es lo que pesan todas juntas
+                        int parte, de;
+                        Descargas.Parte(nombre, out parte, out de);
+                        if (de > 1 && parte != 1) continue;
                         res.Add(new ModeloArchivo
                         {
                             Ruta = f,
                             Nombre = nombre,
                             Carpeta = Path.GetFileName(Path.GetDirectoryName(f)),
-                            Gb = fi.Length / 1073741824.0,
+                            Gb = (de > 1 ? PesoPartido(f, de) : fi.Length) / 1073741824.0,
                             Cuant = Cuantizacion(nombre),
                             Familia = Familia(nombre),
                             EsProyector = nombre.IndexOf("mmproj", StringComparison.OrdinalIgnoreCase) >= 0,
@@ -81,6 +86,20 @@ namespace Capcom
                 catch (Exception ex) { log?.Aviso("No pude leer " + carpeta + ": " + ex.Message); }
             }
             return res.OrderBy(m => m.EsProyector).ThenBy(m => m.Gb).ToList();
+        }
+
+        /// <summary>Lo que pesan juntas las partes de un modelo partido que estén al lado de la primera.</summary>
+        static long PesoPartido(string primera, int de)
+        {
+            string carpeta = Path.GetDirectoryName(primera);
+            string raiz = Descargas.SinParte(Path.GetFileNameWithoutExtension(primera));
+            long total = 0;
+            for (int k = 1; k <= de; k++)
+            {
+                var fi = new FileInfo(Path.Combine(carpeta, raiz + "-" + k.ToString("00000") + "-of-" + de.ToString("00000") + ".gguf"));
+                if (fi.Exists) total += fi.Length;
+            }
+            return total;
         }
 
         static string Cuantizacion(string n)

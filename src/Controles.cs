@@ -154,7 +154,7 @@ namespace Capcom
     /// </summary>
     internal sealed class Boton : Control
     {
-        public enum Glifo { Ninguno, Enviar, Cortar, Mas, Cruz, Copiar, Rehacer, Lapiz, Basura, Flecha, Buscar, Adjuntar, Play, Stop }
+        public enum Glifo { Ninguno, Enviar, Cortar, Mas, Cruz, Copiar, Rehacer, Lapiz, Basura, Flecha, Buscar, Adjuntar, Play, Stop, Llave, Afuera }
         public Glifo Icono = Glifo.Ninguno;
         public Color Acento = Tema.Malva;
         public bool Primario;
@@ -335,6 +335,23 @@ namespace Capcom
                         g.DrawLine(p, x + w * 0.16f, y + h * 0.35f, x + w * 0.16f, y + h * 0.78f);
                         g.DrawLine(p, x + w * 0.84f, y + h * 0.35f, x + w * 0.84f, y + h * 0.6f);
                         g.DrawArc(p, x + w * 0.16f, y + h * 0.5f, w * 0.68f, h * 0.55f, 0, 180);
+                        break;
+                    case Glifo.Llave:
+                        // la sesión: el ojo redondo de la llave y la paleta con dos dientes
+                        g.DrawEllipse(p, x, y + h * 0.28f, w * 0.44f, h * 0.44f);
+                        g.DrawLine(p, x + w * 0.44f, cy, x + w, cy);
+                        g.DrawLine(p, x + w * 0.76f, cy, x + w * 0.76f, y + h * 0.8f);
+                        g.DrawLine(p, x + w * 0.97f, cy, x + w * 0.97f, y + h * 0.7f);
+                        break;
+                    case Glifo.Afuera:
+                        // abrir afuera, en el navegador: la caja abierta y la flecha que sale por la esquina
+                        g.DrawLine(p, x + w * 0.4f, y + h * 0.1f, x, y + h * 0.1f);
+                        g.DrawLine(p, x, y + h * 0.1f, x, y + h);
+                        g.DrawLine(p, x, y + h, x + w * 0.9f, y + h);
+                        g.DrawLine(p, x + w * 0.9f, y + h, x + w * 0.9f, y + h * 0.6f);
+                        g.DrawLine(p, x + w * 0.38f, y + h * 0.62f, x + w, y);
+                        g.DrawLine(p, x + w * 0.58f, y, x + w, y);
+                        g.DrawLine(p, x + w, y, x + w, y + h * 0.42f);
                         break;
                 }
             }

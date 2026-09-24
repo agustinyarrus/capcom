@@ -72,6 +72,7 @@ namespace Capcom
             vRegistro = new VistaRegistro(N);
             vRegistro.Abrir += c => { pestanas.Ir(0); vChat.Abrir(c); };
             vAjustes = new VistaAjustes(N);
+            vModelos.PedirSesion += () => { pestanas.Ir(4); vAjustes.Modo("huggingface"); };
             pantallas = new Pantalla[] { vChat, vConsola, vModelos, vRegistro, vAjustes };
             foreach (var p in pantallas) { p.Visible = false; Controls.Add(p); }
             vChat.Visible = true;
@@ -377,6 +378,8 @@ namespace Capcom
                 new Comando("Ir a modelos", "inventario y arranque del servidor", "Ctrl+3", () => pestanas.Ir(2)),
                 new Comando("Ir a registro", "buscar en todo el archivo", "Ctrl+4", () => pestanas.Ir(3)),
                 new Comando("Ir a ajustes", "muestreo, personas y aspecto", "Ctrl+5", () => pestanas.Ir(4)),
+                new Comando("Buscar modelos en HuggingFace", "cualquier repo con .gguf, también los que piden iniciar sesión", "", () => { pestanas.Ir(2); vModelos.Modo("descargar"); vModelos.FocoBusqueda(); }),
+                new Comando("Sesión de HuggingFace", "el token para bajar los modelos restringidos o privados", "", () => { pestanas.Ir(4); vAjustes.Modo("huggingface"); }),
                 new Comando("Plegar el riel izquierdo", "más lugar para la transcripción", "", () => { N.Cfg.RielIzquierdo = !N.Cfg.RielIzquierdo; N.Cfg.Guardar(); vChat.Acomodar(); vChat.Invalidate(); }),
                 new Comando("Plegar el riel derecho", "esconde la telemetría", "", () => { N.Cfg.RielDerecho = !N.Cfg.RielDerecho; N.Cfg.Guardar(); vChat.Acomodar(); vChat.Invalidate(); }),
                 new Comando("Retícula de fondo", "prende o apaga el papel milimetrado", "", () => { N.Cfg.Reticula = !N.Cfg.Reticula; N.Cfg.Guardar(); Invalidate(true); foreach (var p in pantallas) p.Invalidate(); }),

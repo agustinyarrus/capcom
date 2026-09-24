@@ -21,7 +21,8 @@ namespace Capcom
 
         readonly Deslizador dTemp, dTopP, dTopK, dMax, dPres, dRep, dUI, dFuente, dAncho;
         readonly Interruptor iPensar, iBandejaMin, iBandejaCerrar, iInicioMin, iWindows, iAtajo, iSonido, iQuindar, iEnter, iHistorial, iReticula, iNotif;
-        readonly Campo cPuerto, cHilos, cContexto, cServer, cFlags, cCarpetas;
+        readonly Campo cPuerto, cHilos, cContexto, cServer, cFlags, cCarpetas, cToken;
+        readonly Timer esperaToken = new Timer { Interval = 900 };
         readonly List<Chip> acentos = new List<Chip>();
         readonly List<Chip> chipsPersona = new List<Chip>();
         readonly CajaTexto cajaSistema = new CajaTexto();
@@ -50,6 +51,15 @@ namespace Capcom
             cFlags = CampoNum("banderas extra", () => N.Cfg.FlagsExtra, s => N.Cfg.FlagsExtra = s);
             cCarpetas = CampoNum("carpetas de modelos (separadas por ;)", () => string.Join(";", N.Cfg.CarpetasModelos),
                 s => N.Cfg.CarpetasModelos = s.Split(';').Select(x => x.Trim()).Where(x => x.Length > 0).ToList());
+
+            // ---------------- huggingface: el token para los repos que piden iniciar sesión
+            // se verifica solo, un rato después de la última tecla: pegarlo alcanza para saber si sirve
+            cToken = CampoNum("token de huggingface (para los modelos que piden iniciar sesión)", () => N.Cfg.HfToken,
+                s => { N.Cfg.HfToken = Descargas.LimpiarToken(s); esperaToken.Stop(); esperaToken.Start(); });
+            cToken.Caja.UseSystemPasswordChar = true;
+            cToken.Pista = "hf_…  ·  se saca en huggingface.co/settings/tokens (de lectura alcanza)";
+            esperaToken.Tick += (s, e) => { esperaToken.Stop(); N.Bajadas.VerificarSesion(); };
+            N.Bajadas.SesionCambio += () => N.EnUi(Invalidate);
 
             // ---------------- aspecto
             dUI = Perilla("densidad de la interfaz", 0.6, 1.2, 0.05, "0.00", Tema.Malva, v => { N.Cfg.EscalaUI = v; });
@@ -181,6 +191,8 @@ namespace Capcom
             cPuerto.Texto = N.Cfg.Puerto.ToString(); cHilos.Texto = N.Cfg.Hilos.ToString(); cContexto.Texto = N.Cfg.Contexto.ToString();
             cServer.Texto = N.Cfg.LlamaServer; cFlags.Texto = N.Cfg.FlagsExtra;
             cCarpetas.Texto = string.Join(";", N.Cfg.CarpetasModelos);
+            if (!cToken.Caja.Focused) cToken.Texto = N.Cfg.HfToken;
+            N.Bajadas.Sesionar();
             SincronizarAcentos();
             if (editando == null) editando = N.PersonaActual;
             SincronizarPersonas();
@@ -254,6 +266,12 @@ namespace Capcom
         {
             var q = (que ?? "").ToLowerInvariant();
             if (q == "personas" && N.Personas.Count > 0) { editando = N.Personas[0]; SincronizarPersonas(); }
+            if (q == "huggingface" || q == "token")
+            {
+                cToken.Caja.Focus();
+                cToken.Caja.SelectAll();
+                N.Bajadas.Sesionar();
+            }
             Invalidate();
         }
 
@@ -296,6 +314,10 @@ namespace Capcom
             cFlags.SetBounds(xi, y, col - S(8), S(40)); y += S(48);
             cCarpetas.SetBounds(xi, y, col - S(8), S(40)); y += S(48);
             Boton.Fila(xi, y, S(26), S(8), btProbar, btRestaurar);
+
+            // --- columna izquierda: huggingface (después de los botones: PROBAR EL ENLACE es del servidor local, no de esto)
+            y += S(26) + S(38);
+            cToken.SetBounds(xi, y, col - S(8), S(40));
 
             // --- columna derecha: aspecto
             y = S(46);
@@ -366,6 +388,17 @@ namespace Capcom
             // ⭐ los rótulos se ubican desde la posición REAL de los controles, no de una cuenta paralela que
             //    se desincroniza en cuanto se mueve un control (así se terminaba escribiendo encima de ellos)
             Tema.Rotulo(g, "", "enlace con el servidor", new Rectangle(xi, cPuerto.Top - S(21), col - S(8), S(14)), Tema.Teal, esc);
+            Tema.Rotulo(g, "", "huggingface", new Rectangle(xi, cToken.Top - S(21), col - S(8), S(14)), Tema.Ambar, esc, N.Bajadas.Sesion);
+            {
+                // debajo del token: de dónde sale el que se usa, y que no queda en claro en el disco
+                var b = N.Bajadas;
+                string origen = b.OrigenToken;
+                string nota = origen.Length > 0 && origen != "ajustes"
+                    ? "usando el token de " + (origen == "huggingface-cli" ? "«hf auth login» (huggingface-cli)" : "la variable " + origen) + " · el de acá manda si ponés uno"
+                    : "lo piden los repos restringidos y los privados · se guarda cifrado con tu cuenta de Windows";
+                Tema.Texto_(g, nota, Tema.Fina(8f), Tema.Apagado, new Rectangle(xi + S(2), cToken.Bottom + S(4), col - S(12), S(14)),
+                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+            }
             Tema.Rotulo(g, "06", "aspecto", new Rectangle(xd, S(16), col - S(8), S(14)), N.Cfg.ColorAcento, esc);
             Tema.Tracking(g, "ACENTO", Tema.Media(7f), Tema.Apagado, xd, yAcentos, S(12), S(2));
             Tema.Rotulo(g, "", "comportamiento", new Rectangle(xd, iBandejaMin.Top - S(22), col - S(8), S(14)), Tema.Salvia, esc);

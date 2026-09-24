@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace Capcom
 {
@@ -23,6 +25,10 @@ namespace Capcom
         public int Contexto = 8192;
         public string FlagsExtra = "";
         public bool LevantarSolo = false;      // ¿arrancar el servidor si no está? (nunca por sorpresa)
+
+        // --- huggingface
+        /// <summary>El token para los repos que piden iniciar sesión. En config.json va cifrado: ver <see cref="Secreto"/>.</summary>
+        public string HfToken = "";
 
         // --- muestreo
         public double Temperatura = 0.7;
@@ -109,6 +115,7 @@ namespace Capcom
             c.Contexto = Math.Max(512, Json.I(d, "contexto", c.Contexto));
             c.FlagsExtra = Json.S(d, "flagsExtra", "");
             c.LevantarSolo = Json.B(d, "levantarSolo", c.LevantarSolo);
+            c.HfToken = Secreto.Abrir(Json.S(d, "hfToken", ""));
 
             c.Temperatura = Json.D(d, "temperatura", c.Temperatura);
             c.TopP = Json.D(d, "topP", c.TopP);
@@ -161,6 +168,7 @@ namespace Capcom
                     ["contexto"] = Contexto,
                     ["flagsExtra"] = FlagsExtra,
                     ["levantarSolo"] = LevantarSolo,
+                    ["hfToken"] = Secreto.Cerrar(HfToken),
                     ["temperatura"] = Temperatura,
                     ["topP"] = TopP,
                     ["topK"] = TopK,
@@ -214,6 +222,32 @@ namespace Capcom
                     default: return Tema.Malva;
                 }
             }
+        }
+    }
+
+    /// <summary>
+    /// Lo que no puede quedar legible en config.json, que vive al lado del exe y puede terminar en un pendrive o en
+    /// una carpeta sincronizada: se cifra con DPAPI, atado a la cuenta de Windows. Copiado a otra máquina (u otro
+    /// usuario) no se abre: vuelve vacío y hay que pegarlo de nuevo, que es justo lo que tiene que pasar.
+    /// </summary>
+    internal static class Secreto
+    {
+        const string Prefijo = "dpapi:";
+        static readonly byte[] Sal = Encoding.UTF8.GetBytes("capcom · huggingface");
+
+        public static string Cerrar(string claro)
+        {
+            if (string.IsNullOrEmpty(claro)) return "";
+            try { return Prefijo + Convert.ToBase64String(ProtectedData.Protect(Encoding.UTF8.GetBytes(claro), Sal, DataProtectionScope.CurrentUser)); }
+            catch { return ""; }        // sin DPAPI no se guarda: mejor pedirlo de nuevo que dejarlo en claro
+        }
+
+        public static string Abrir(string guardado)
+        {
+            if (string.IsNullOrEmpty(guardado)) return "";
+            if (!guardado.StartsWith(Prefijo, StringComparison.Ordinal)) return guardado.Trim();    // pegado a mano en el json: se cifra al guardar
+            try { return Encoding.UTF8.GetString(ProtectedData.Unprotect(Convert.FromBase64String(guardado.Substring(Prefijo.Length)), Sal, DataProtectionScope.CurrentUser)); }
+            catch { return ""; }
         }
     }
 
