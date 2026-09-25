@@ -109,13 +109,13 @@ namespace Capcom
         /// </summary>
         public static readonly List<Repo> Catalogo = new List<Repo>
         {
-            new Repo { Nombre = "Qwen3.5-1.5B", Ruta = "Qwen/Qwen2.5-1.5B-Instruct-GGUF", Prefiere = "q4_k_m", GbAprox = 1.0,
+            new Repo { Nombre = "Qwen2.5-1.5B", Ruta = "Qwen/Qwen2.5-1.5B-Instruct-GGUF", Prefiere = "q4_k_m", GbAprox = 1.0,
                        Nota = "chico y correcto en castellano; buen punto de partida" },
-            new Repo { Nombre = "Qwen3.5-3B", Ruta = "Qwen/Qwen2.5-3B-Instruct-GGUF", Prefiere = "q4_k_m", GbAprox = 2.0,
+            new Repo { Nombre = "Qwen2.5-3B", Ruta = "Qwen/Qwen2.5-3B-Instruct-GGUF", Prefiere = "q4_k_m", GbAprox = 2.0,
                        Nota = "el salto de calidad más barato en RAM" },
-            new Repo { Nombre = "Qwen3.5-7B", Ruta = "Qwen/Qwen2.5-7B-Instruct-GGUF", Prefiere = "q4_k_m", GbAprox = 4.7,
+            new Repo { Nombre = "Qwen2.5-7B", Ruta = "Qwen/Qwen2.5-7B-Instruct-GGUF", Prefiere = "q4_k_m", GbAprox = 4.7,
                        Nota = "escribe notablemente mejor; ya se siente lento para chatear" },
-            new Repo { Nombre = "Qwen3.5-Coder-7B", Ruta = "Qwen/Qwen2.5-Coder-7B-Instruct-GGUF", Prefiere = "q4_k_m", GbAprox = 4.7,
+            new Repo { Nombre = "Qwen2.5-Coder-7B", Ruta = "Qwen/Qwen2.5-Coder-7B-Instruct-GGUF", Prefiere = "q4_k_m", GbAprox = 4.7,
                        Nota = "para el examen de código: es lo suyo" },
             new Repo { Nombre = "Llama-3.2-3B", Ruta = "bartowski/Llama-3.2-3B-Instruct-GGUF", Prefiere = "Q4_K_M", GbAprox = 2.0,
                        Nota = "ojo: en las pruebas viejas contestaba en inglés" },

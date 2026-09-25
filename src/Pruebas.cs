@@ -6,6 +6,7 @@ using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Text.RegularExpressions;
 
 namespace Capcom
 {
@@ -430,7 +431,19 @@ namespace Capcom
                 Descargas.SiguientePagina("<https://huggingface.co/api/models/a/b/tree/main?recursive=true&cursor=eyJ4Ijo1fQ%3D%3D>; rel=\"next\""),
                 "la página siguiente del árbol sale de la cabecera Link");
             Igual("", Descargas.SiguientePagina(null), "y sin cabecera no hay más páginas");
+
+            // el nombre de la fila es lo que se baja: si el repo es «Qwen2.5», la fila no puede decir «Qwen3.5»
+            var mal = Descargas.Catalogo.Where(r =>
+            {
+                Match n = VersionDeFamilia.Match(r.Nombre), p = VersionDeFamilia.Match(r.Ruta);
+                return n.Success && p.Success && n.Groups[2].Value != p.Groups[2].Value;
+            }).Select(r => r.Nombre).ToList();
+            A(mal.Count == 0, "cada fila del catálogo nombra la versión que baja" + (mal.Count > 0 ? " (no: " + string.Join(", ", mal) + ")" : ""));
         }
+
+        /// <summary>Familia y versión de un modelo: «Qwen2.5-7B» → (qwen, 2.5) · «Llama-3.2-3B» → (llama, 3.2).</summary>
+        static readonly Regex VersionDeFamilia = new Regex(@"(?i)\b(qwen|llama|phi|gemma|mistral|granite|smollm)-?(\d+(?:\.\d+)?)",
+            RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
         /// <summary>En el disco: un modelo partido es UN modelo, que pesa lo que suman sus partes.</summary>
         static void ModelosPartidos()

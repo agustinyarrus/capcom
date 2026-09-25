@@ -523,7 +523,7 @@ namespace Capcom
         }
 
         /// <summary>
-        /// Busca el repo y arranca la descarga. `q` es «repo archivo», por ejemplo `qwen3.5-1.5b q2_k`: el repo es uno
+        /// Busca el repo y arranca la descarga. `q` es «repo archivo», por ejemplo `qwen2.5-1.5b q2_k`: el repo es uno
         /// del catálogo o cualquier `autor/repo` de HuggingFace (o su link), y el archivo, un pedazo de su nombre.
         /// Lo usa la orden `--traer` y también sirve para dejar bajando algo desde la terminal.
         /// </summary>
